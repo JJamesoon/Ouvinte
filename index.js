@@ -8,49 +8,73 @@ const EVO_URL = "https://evolution-api-production-bc74.up.railway.app";
 const INSTANCE_NAME = "Barbearia";
 const API_KEY = "D34185BFF8C0-4FBE-BC0E-CCD640245900";
 
+// CONFIGURAÇÕES DO SUPABASE (Pegue no painel do Supabase em Project Settings > API)
+const SUPABASE_URL = "SUA_URL_DO_SUPABASE";
+const SUPABASE_KEY = "SUA_ANON_OR_SERVICE_ROLE_KEY";
+
 app.post('/webhook-whatsapp', async (req, res) => {
     const data = req.body;
 
-    // Verifica se é uma mensagem recebida (padrão v2)
     if (data.event === "messages.upsert") {
-        
-        // Puxa os dados da mensagem (compatível com Array ou Objeto)
-        const msg = data.data.message || (data.data[0] && data.data[0].message) || data.data;
         const key = data.data.key || (data.data[0] && data.data[0].key);
+        const msg = data.data.message || (data.data[0] && data.data[0].message) || data.data;
 
         if (key && !key.fromMe) {
             const remoteJid = key.remoteJid;
-            
-            // Ignora grupos
-            if (remoteJid.includes('@g.us')) return res.status(200).send('Group ignored');
-
-            // Limpa o número (remove o @s.whatsapp.net)
             const cleanNumber = remoteJid.split('@')[0];
+            
+            // Pega o texto enviado (converte para texto simples)
+            const textReceived = (msg.conversation || msg.extendedTextMessage?.text || "").trim();
 
-            console.log(`📩 Mensagem de ${cleanNumber}. Enviando resposta de teste...`);
+            console.log(`📩 Cliente ${cleanNumber} respondeu: ${textReceived}`);
 
-            try {
-                // Requisição exata para Evolution v2
-                await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
-                    number: cleanNumber,
-                    text: "isso e apena test",
-                    delay: 1200,
-                    linkPreview: false
-                }, {
-                    headers: { 
-                        "apikey": API_KEY,
-                        "Content-Type": "application/json"
-                    }
-                });
+            let statusAgendamento = null;
 
-                console.log("✅ Resposta enviada com sucesso!");
-            } catch (error) {
-                // Log detalhado para capturar qualquer erro da API
-                console.error("❌ Erro da API:", JSON.stringify(error.response?.data, null, 2) || error.message);
+            // Lógica de Confirmação ou Cancelamento
+            if (textReceived === "1") {
+                statusAgendamento = "confirmado";
+            } else if (textReceived === "0") {
+                statusAgendamento = "cancelado";
+            }
+
+            // Se for uma das opções, atualiza o Supabase
+            if (statusAgendamento) {
+                try {
+                    // Faz o UPDATE no Supabase
+                    // Exemplo: Procura na tabela 'agendamentos' onde o 'telefone' é igual ao do Zap
+                    const response = await axios.patch(
+                        `${SUPABASE_URL}/rest/v1/agendamentos?telefone=eq.${cleanNumber}`, 
+                        { status: statusAgendamento }, // Nome da coluna que você quer mudar
+                        {
+                            headers: {
+                                "apikey": SUPABASE_KEY,
+                                "Authorization": `Bearer ${SUPABASE_KEY}`,
+                                "Content-Type": "application/json",
+                                "Prefer": "return=minimal"
+                            }
+                        }
+                    );
+
+                    console.log(`✅ Supabase atualizado: ${statusAgendamento}`);
+
+                    // Responde ao cliente confirmando que recebeu
+                    const respostaTexto = statusAgendamento === "confirmado" 
+                        ? "Obrigado! Seu agendamento está confirmado. ✅" 
+                        : "Entendido. Seu agendamento foi cancelado. ❌";
+
+                    await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
+                        number: cleanNumber,
+                        text: respostaTexto
+                    }, {
+                        headers: { "apikey": API_KEY }
+                    });
+
+                } catch (error) {
+                    console.error("❌ Erro ao falar com Supabase:", error.response?.data || error.message);
+                }
             }
         }
     }
-
     res.status(200).send('OK');
 });
 
