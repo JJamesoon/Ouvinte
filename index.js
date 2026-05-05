@@ -3,68 +3,102 @@ const axios = require('axios');
 const app = express();
 app.use(express.json());
 
-// CONFIGURAÇÕES DA SUA EVOLUTION API
+// CONFIGURAÇÕES DA EVOLUTION API
 const EVO_URL = "https://evolution-api-production-bc74.up.railway.app"; 
 const INSTANCE_NAME = "Barbearia";
 const API_KEY = "D34185BFF8C0-4FBE-BC0E-CCD640245900";
 
-// CONFIGURAÇÕES DO SUPABASE (Pegue no painel do Supabase em Project Settings > API)
-const SUPABASE_URL = "https://bmkeegwjvtfwiobcptqq.supabase.co/rest/v1/";
+// CONFIGURAÇÕES DO SUPABASE
+const SUPABASE_URL = "https://bmkeegwjvtfwiobcptqq.supabase.co/rest/v1";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJta2VlZ3dqdnRmd2lvYmNwdHFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2MDAwMTcsImV4cCI6MjA5MzE3NjAxN30.8oIqYcQ8252nndgyZZIRjxeKKk-P8TR2L91fr-q0-LE";
+
+// ATENÇÃO: COLOQUE O SEU NÚMERO DE WHATSAPP AQUI (FORMATO: 55519... OU 5548...)
+const TELEFONE_DO_BARBEIRO = "554896156188"; 
 
 app.post('/webhook-whatsapp', async (req, res) => {
     const data = req.body;
 
+    // --- 1. LÓGICA DE RESPOSTA DO BARBEIRO ---
+    // Detecta quando uma mensagem chega no WhatsApp vindo da Evolution API
     if (data.event === "messages.upsert") {
-        const key = data.data.key || (data.data[0] && data.data[0].key);
-        const msg = data.data.message || (data.data[0] && data.data[0].message) || data.data;
+        const key = data.data.key || (data.data[0]?.key);
+        const msg = data.data.message || (data.data[0]?.message);
+        
+        if (!key || key.fromMe) return res.sendStatus(200);
 
-        if (key && !key.fromMe) {
-            const remoteJid = key.remoteJid;
-            const cleanNumber = remoteJid.split('@')[0];
-            const textReceived = (msg.conversation || msg.extendedTextMessage?.text || "").trim();
+        const remoteJid = key.remoteJid;
+        const cleanNumber = remoteJid.split('@')[0];
+        const textReceived = (msg?.conversation || msg?.extendedTextMessage?.text || "").trim();
 
-            console.log(`📩 Cliente ${cleanNumber} enviou: ${textReceived}`);
-
+        // Verifica se quem respondeu foi o Barbeiro
+        if (cleanNumber === TELEFONE_DO_BARBEIRO) {
             let novoStatus = null;
             if (textReceived === "1") novoStatus = "confirmado";
             else if (textReceived === "0") novoStatus = "cancelado";
 
             if (novoStatus) {
                 try {
-                    // ATENÇÃO: Ajustado para usar a coluna 'cliente_telefone' da sua imagem
-                    await axios.patch(
-                        `${SUPABASE_URL}/rest/v1/appointments?cliente_telefone=eq.${cleanNumber}`, 
-                        { status: novoStatus }, 
-                        {
-                            headers: {
-                                "apikey": SUPABASE_KEY,
-                                "Authorization": `Bearer ${SUPABASE_KEY}`,
-                                "Content-Type": "application/json"
-                            }
-                        }
+                    // Busca o agendamento mais recente que ainda está 'pendente'
+                    const { data: agendamentos } = await axios.get(
+                        `${SUPABASE_URL}/appointments?status=eq.pendente&order=created_at.desc&limit=1`, 
+                        { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` } }
                     );
 
-                    console.log(`✅ Status alterado para: ${novoStatus}`);
+                    if (agendamentos && agendamentos.length > 0) {
+                        const agendamentoId = agendamentos[0].id;
 
-                    // Resposta automática no WhatsApp
-                    const feedback = novoStatus === "confirmado" 
-                        ? "Show! Seu agendamento foi confirmado. ✅" 
-                        : "Certo. Agendamento cancelado. ❌";
+                        // Atualiza o status no Supabase baseado na resposta do barbeiro
+                        await axios.patch(
+                            `${SUPABASE_URL}/appointments?id=eq.${agendamentoId}`, 
+                            { status: novoStatus }, 
+                            { 
+                                headers: { 
+                                    "apikey": SUPABASE_KEY, 
+                                    "Authorization": `Bearer ${SUPABASE_KEY}`,
+                                    "Content-Type": "application/json"
+                                } 
+                            }
+                        );
 
-                    await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
-                        number: cleanNumber,
-                        text: feedback
-                    }, { headers: { "apikey": API_KEY } });
-
-                } catch (error) {
-                    console.error("❌ Erro Supabase:", error.response?.data || error.message);
+                        // Confirmação para o Barbeiro
+                        await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
+                            number: TELEFONE_DO_BARBEIRO,
+                            text: `✅ O agendamento de ${agendamentos[0].cliente_nome} foi ${novoStatus.toUpperCase()} no sistema.`
+                        }, { headers: { "apikey": API_KEY } });
+                    }
+                } catch (e) {
+                    console.error("❌ Erro ao processar resposta do barbeiro:", e.response?.data || e.message);
                 }
             }
+            return res.sendStatus(200);
         }
     }
+
+    // --- 2. LÓGICA DE AVISO AO BARBEIRO (Vindo do Webhook do Supabase) ---
+    // O Supabase envia um POST para cá toda vez que um cliente agenda (INSERT)
+    if (data.table === "appointments" && data.type === "INSERT") {
+        const novoAgendamento = data.record;
+        
+        const msgBarbeiro = `✂️ *NOVO AGENDAMENTO!*\n\n` +
+                           `👤 Cliente: ${novoAgendamento.cliente_nome}\n` +
+                           `⏰ Horário: ${novoAgendamento.horario}\n` +
+                           `💇‍♂️ Serviço: ${novoAgendamento.servico}\n\n` +
+                           `*Responda:*\n*1* para Confirmar\n*0* para Cancelar`;
+
+        try {
+            await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
+                number: TELEFONE_DO_BARBEIRO,
+                text: msgBarbeiro
+            }, { headers: { "apikey": API_KEY } });
+            
+            console.log("🚀 Notificação enviada ao barbeiro.");
+        } catch (e) {
+            console.error("❌ Erro ao notificar barbeiro:", e.response?.data || e.message);
+        }
+    }
+
     res.status(200).send('OK');
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Ouvinte rodando na porta ${PORT}`));
+app.listen(PORT, () => console.log(`Serviço ativo na porta ${PORT}`));
