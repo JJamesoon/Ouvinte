@@ -9,8 +9,8 @@ const INSTANCE_NAME = "Barbearia";
 const API_KEY = "D34185BFF8C0-4FBE-BC0E-CCD640245900";
 
 // CONFIGURAÇÕES DO SUPABASE (Pegue no painel do Supabase em Project Settings > API)
-const SUPABASE_URL = "SUA_URL_DO_SUPABASE";
-const SUPABASE_KEY = "SUA_ANON_OR_SERVICE_ROLE_KEY";
+const SUPABASE_URL = "https://bmkeegwjvtfwiobcptqq.supabase.co/rest/v1/";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJta2VlZ3dqdnRmd2lvYmNwdHFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2MDAwMTcsImV4cCI6MjA5MzE3NjAxN30.8oIqYcQ8252nndgyZZIRjxeKKk-P8TR2L91fr-q0-LE";
 
 app.post('/webhook-whatsapp', async (req, res) => {
     const data = req.body;
