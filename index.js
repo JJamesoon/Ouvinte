@@ -11,22 +11,31 @@ const API_KEY = "D34185BFF8C0-4FBE-BC0E-CCD640245900";
 app.post('/webhook-whatsapp', async (req, res) => {
     const data = req.body;
 
-    // Verifica se é uma mensagem recebida
+    // Verifica se é uma mensagem recebida (padrão v2)
     if (data.event === "messages.upsert") {
-        // Na v2, os dados da mensagem ficam dentro de data.data[0] ou data.data
-        // Vamos garantir que pegamos o remoteJid corretamente
-        const msgData = data.data.message || data.data[0]?.message || data.data;
-        const remoteJid = data.data.key?.remoteJid || data.data[0]?.key?.remoteJid;
-        const fromMe = data.data.key?.fromMe || data.data[0]?.key?.fromMe;
+        
+        // Puxa os dados da mensagem (compatível com Array ou Objeto)
+        const msg = data.data.message || (data.data[0] && data.data[0].message) || data.data;
+        const key = data.data.key || (data.data[0] && data.data[0].key);
 
-        if (remoteJid && !fromMe && !remoteJid.includes('@g.us')) {
-            console.log(`📩 Mensagem de ${remoteJid}. Enviando teste...`);
+        if (key && !key.fromMe) {
+            const remoteJid = key.remoteJid;
+            
+            // Ignora grupos
+            if (remoteJid.includes('@g.us')) return res.status(200).send('Group ignored');
+
+            // Limpa o número (remove o @s.whatsapp.net)
+            const cleanNumber = remoteJid.split('@')[0];
+
+            console.log(`📩 Mensagem de ${cleanNumber}. Enviando resposta de teste...`);
 
             try {
-                // Padrão exato para Evolution v2
+                // Requisição exata para Evolution v2
                 await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
-                    number: remoteJid,
-                    text: "isso e apena test" 
+                    number: cleanNumber,
+                    text: "isso e apena test",
+                    delay: 1200,
+                    linkPreview: false
                 }, {
                     headers: { 
                         "apikey": API_KEY,
@@ -36,8 +45,8 @@ app.post('/webhook-whatsapp', async (req, res) => {
 
                 console.log("✅ Resposta enviada com sucesso!");
             } catch (error) {
-                // Mostra o erro real se a API rejeitar
-                console.error("❌ Erro detalhado:", error.response?.data || error.message);
+                // Log detalhado para capturar qualquer erro da API
+                console.error("❌ Erro da API:", JSON.stringify(error.response?.data, null, 2) || error.message);
             }
         }
     }
