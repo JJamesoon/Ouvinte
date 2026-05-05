@@ -13,31 +13,31 @@ app.post('/webhook-whatsapp', async (req, res) => {
 
     // Verifica se é uma mensagem recebida
     if (data.event === "messages.upsert") {
-        const remoteJid = data.data.key.remoteJid;
-        const fromMe = data.data.key.fromMe;
-        const isGroup = remoteJid.includes('@g.us');
+        // Na v2, os dados da mensagem ficam dentro de data.data[0] ou data.data
+        // Vamos garantir que pegamos o remoteJid corretamente
+        const msgData = data.data.message || data.data[0]?.message || data.data;
+        const remoteJid = data.data.key?.remoteJid || data.data[0]?.key?.remoteJid;
+        const fromMe = data.data.key?.fromMe || data.data[0]?.key?.fromMe;
 
-        // Só responde se: não for grupo e não for mensagem enviada por você
-        if (!isGroup && !fromMe) {
+        if (remoteJid && !fromMe && !remoteJid.includes('@g.us')) {
             console.log(`📩 Mensagem de ${remoteJid}. Enviando teste...`);
 
             try {
+                // Padrão exato para Evolution v2
                 await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
                     number: remoteJid,
-                    options: {
-                        delay: 1200,
-                        presence: "composing"
-                    },
-                    textMessage: {
-                        text: "isso e apena test"
-                    }
+                    text: "isso e apena test" 
                 }, {
-                    headers: { "apikey": API_KEY }
+                    headers: { 
+                        "apikey": API_KEY,
+                        "Content-Type": "application/json"
+                    }
                 });
 
                 console.log("✅ Resposta enviada com sucesso!");
             } catch (error) {
-                console.error("❌ Erro ao enviar:", error.response?.data || error.message);
+                // Mostra o erro real se a API rejeitar
+                console.error("❌ Erro detalhado:", error.response?.data || error.message);
             }
         }
     }
