@@ -1,30 +1,31 @@
 const express = require('express');
-const axios = require('axios'); // Vamos usar o axios para enviar a resposta
+const axios = require('axios');
 const app = express();
 app.use(express.json());
 
 // CONFIGURAÇÕES DA SUA EVOLUTION API
-const EVO_URL = "SUA_URL_DA_EVOLUTION_AQUI"; // Ex: https://api-evolution.up.railway.app
-const INSTANCE_NAME = "NOME_DA_SUA_INSTANCIA";
-const API_KEY = "SUA_API_KEY_GLOBAL";
+const EVO_URL = "https://evolution-api-production-bc74.up.railway.app"; 
+const INSTANCE_NAME = "Barbearia";
+const API_KEY = "D34185BFF8C0-4FBE-BC0E-CCD640245900";
 
 app.post('/webhook-whatsapp', async (req, res) => {
     const data = req.body;
 
+    // Verifica se é uma mensagem recebida
     if (data.event === "messages.upsert") {
-        const isGroup = data.data.key.remoteJid.includes('@g.us');
-        const fromMe = data.data.key.fromMe;
         const remoteJid = data.data.key.remoteJid;
+        const fromMe = data.data.key.fromMe;
+        const isGroup = remoteJid.includes('@g.us');
 
-        // Só responde se: não for grupo, não for mensagem enviada por você e tiver texto
+        // Só responde se: não for grupo e não for mensagem enviada por você
         if (!isGroup && !fromMe) {
-            console.log(`📩 Mensagem recebida de ${remoteJid}. Enviando resposta de teste...`);
+            console.log(`📩 Mensagem de ${remoteJid}. Enviando teste...`);
 
             try {
                 await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
                     number: remoteJid,
                     options: {
-                        delay: 1200, // delay de 1.2 segundos para parecer humano
+                        delay: 1200,
                         presence: "composing"
                     },
                     textMessage: {
@@ -36,7 +37,7 @@ app.post('/webhook-whatsapp', async (req, res) => {
 
                 console.log("✅ Resposta enviada com sucesso!");
             } catch (error) {
-                console.error("❌ Erro ao enviar resposta:", error.response?.data || error.message);
+                console.error("❌ Erro ao enviar:", error.response?.data || error.message);
             }
         }
     }
