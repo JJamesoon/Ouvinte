@@ -22,55 +22,43 @@ app.post('/webhook-whatsapp', async (req, res) => {
         if (key && !key.fromMe) {
             const remoteJid = key.remoteJid;
             const cleanNumber = remoteJid.split('@')[0];
-            
-            // Pega o texto enviado (converte para texto simples)
             const textReceived = (msg.conversation || msg.extendedTextMessage?.text || "").trim();
 
-            console.log(`📩 Cliente ${cleanNumber} respondeu: ${textReceived}`);
+            console.log(`📩 Cliente ${cleanNumber} enviou: ${textReceived}`);
 
-            let statusAgendamento = null;
+            let novoStatus = null;
+            if (textReceived === "1") novoStatus = "confirmado";
+            else if (textReceived === "0") novoStatus = "cancelado";
 
-            // Lógica de Confirmação ou Cancelamento
-            if (textReceived === "1") {
-                statusAgendamento = "confirmado";
-            } else if (textReceived === "0") {
-                statusAgendamento = "cancelado";
-            }
-
-            // Se for uma das opções, atualiza o Supabase
-            if (statusAgendamento) {
+            if (novoStatus) {
                 try {
-                    // Faz o UPDATE no Supabase
-                    // Exemplo: Procura na tabela 'agendamentos' onde o 'telefone' é igual ao do Zap
-                    const response = await axios.patch(
-                        `${SUPABASE_URL}/rest/v1/agendamentos?telefone=eq.${cleanNumber}`, 
-                        { status: statusAgendamento }, // Nome da coluna que você quer mudar
+                    // ATENÇÃO: Ajustado para usar a coluna 'cliente_telefone' da sua imagem
+                    await axios.patch(
+                        `${SUPABASE_URL}/rest/v1/appointments?cliente_telefone=eq.${cleanNumber}`, 
+                        { status: novoStatus }, 
                         {
                             headers: {
                                 "apikey": SUPABASE_KEY,
                                 "Authorization": `Bearer ${SUPABASE_KEY}`,
-                                "Content-Type": "application/json",
-                                "Prefer": "return=minimal"
+                                "Content-Type": "application/json"
                             }
                         }
                     );
 
-                    console.log(`✅ Supabase atualizado: ${statusAgendamento}`);
+                    console.log(`✅ Status alterado para: ${novoStatus}`);
 
-                    // Responde ao cliente confirmando que recebeu
-                    const respostaTexto = statusAgendamento === "confirmado" 
-                        ? "Obrigado! Seu agendamento está confirmado. ✅" 
-                        : "Entendido. Seu agendamento foi cancelado. ❌";
+                    // Resposta automática no WhatsApp
+                    const feedback = novoStatus === "confirmado" 
+                        ? "Show! Seu agendamento foi confirmado. ✅" 
+                        : "Certo. Agendamento cancelado. ❌";
 
                     await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
                         number: cleanNumber,
-                        text: respostaTexto
-                    }, {
-                        headers: { "apikey": API_KEY }
-                    });
+                        text: feedback
+                    }, { headers: { "apikey": API_KEY } });
 
                 } catch (error) {
-                    console.error("❌ Erro ao falar com Supabase:", error.response?.data || error.message);
+                    console.error("❌ Erro Supabase:", error.response?.data || error.message);
                 }
             }
         }
