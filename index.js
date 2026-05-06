@@ -38,45 +38,68 @@ app.post('/webhook-whatsapp', async (req, res) => {
     
     // Verifica se quem respondeu foi o Barbeiro
     if (cleanNumber === TELEFONE_DO_BARBEIRO) {
+      console.log(`🔑 [BARBEIRO] Mensagem do barbeiro detectada. Texto recebido: "${textReceived}"`);
+
       let novoStatus = null;
       if (textReceived === "1") novoStatus = "confirmado";
       else if (textReceived === "0") novoStatus = "cancelado";
-      
+
+      console.log(`🔑 [BARBEIRO] novoStatus resolvido para: ${novoStatus}`);
+
       if (novoStatus) {
         try {
+          const queryUrl = `${SUPABASE_URL}/appointments?status=eq.pendente&order=created_at.desc&limit=1`;
+          console.log(`🔍 [SUPABASE] Iniciando busca de agendamento pendente. URL: ${queryUrl}`);
+
           // Busca o agendamento mais recente que ainda está 'pendente'
-          const { data: agendamentos } = await axios.get(
-            `${SUPABASE_URL}/appointments?status=eq.pendente&order=created_at.desc&limit=1`, 
+          const getResponse = await axios.get(
+            queryUrl,
             { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` } }
           );
-          
-          if (agendamentos && agendamentos.length > 0) {
+          const agendamentos = getResponse.data;
+
+          console.log(`🔍 [SUPABASE] Resposta recebida. HTTP ${getResponse.status}. Agendamentos encontrados: ${agendamentos ? agendamentos.length : 0}`);
+          console.log(`🔍 [SUPABASE] Dados retornados:`, JSON.stringify(agendamentos, null, 2));
+
+          if (!agendamentos || agendamentos.length === 0) {
+            console.log(`⚠️ [SUPABASE] Nenhum agendamento com status 'pendente' encontrado. Nada a atualizar.`);
+          } else {
             const agendamentoId = agendamentos[0].id;
-            
+            console.log(`✏️ [SUPABASE] Agendamento encontrado. ID: ${agendamentoId}. Iniciando PATCH para status="${novoStatus}"...`);
+
             // Atualiza o status no Supabase
-            await axios.patch(
-              `${SUPABASE_URL}/appointments?id=eq.${agendamentoId}`, 
-              { status: novoStatus }, 
-              { 
-                headers: { 
-                  "apikey": SUPABASE_KEY, 
+            const patchResponse = await axios.patch(
+              `${SUPABASE_URL}/appointments?id=eq.${agendamentoId}`,
+              { status: novoStatus },
+              {
+                headers: {
+                  "apikey": SUPABASE_KEY,
                   "Authorization": `Bearer ${SUPABASE_KEY}`,
                   "Content-Type": "application/json"
-                } 
+                }
               }
             );
-            
+
+            console.log(`✏️ [SUPABASE] PATCH concluído. HTTP ${patchResponse.status}. Resposta:`, JSON.stringify(patchResponse.data, null, 2));
+
             // Confirmação para o Barbeiro
+            console.log(`📤 [WHATSAPP] Enviando confirmação ao barbeiro...`);
             await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
               number: TELEFONE_DO_BARBEIRO,
               text: `✅ O agendamento de ${agendamentos[0].cliente_nome} foi ${novoStatus.toUpperCase()} no sistema.`
             }, { headers: { "apikey": API_KEY } });
-            
-            console.log(`✅ Agendamento ${agendamentoId} atualizado para: ${novoStatus}`);
+
+            console.log(`✅ [CONCLUÍDO] Agendamento ${agendamentoId} atualizado para: ${novoStatus}`);
           }
         } catch (e) {
-          console.error("❌ Erro ao processar resposta do barbeiro:", e.response?.data || e.message);
+          console.error(`❌ [ERRO] Falha ao processar resposta do barbeiro.`);
+          console.error(`❌ [ERRO] Mensagem:`, e.message);
+          console.error(`❌ [ERRO] HTTP Status:`, e.response?.status);
+          console.error(`❌ [ERRO] Resposta do servidor:`, JSON.stringify(e.response?.data, null, 2));
+          console.error(`❌ [ERRO] Stack:`, e.stack);
         }
+      } else {
+        console.log(`⚠️ [BARBEIRO] Texto "${textReceived}" não é "1" nem "0". Nenhuma ação tomada.`);
       }
     }
     
