@@ -3,12 +3,10 @@ const axios = require('axios');
 const app = express();
 app.use(express.json());
 
-// CONFIGURAÇÕES DA EVOLUTION API
 const EVO_URL = "https://evolution-api-production-bc74.up.railway.app"; 
 const INSTANCE_NAME = "Barbearia";
 const API_KEY = "D34185BFF8C0-4FBE-BC0E-CCD640245900";
 
-// CONFIGURAÇÕES DO SUPABASE
 const SUPABASE_URL = "https://bmkeegwjvtfwiobcptqq.supabase.co/rest/v1";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJta2VlZ3dqdnRmd2lvYmNwdHFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2MDAwMTcsImV4cCI6MjA5MzE3NjAxN30.8oIqYcQ8252nndgyZZIRjxeKKk-P8TR2L91fr-q0-LE";
 
@@ -19,17 +17,24 @@ app.post('/webhook-whatsapp', async (req, res) => {
   
   console.log('📨 Webhook recebido:', JSON.stringify(data, null, 2));
 
-  // --- 1. LÓGICA PARA RECEBER O VOTO DA ENQUETE ---
-  if (data.event === "poll.vote") {
-    const voteData = data.data;
-    const cleanNumber = voteData.key.remoteJid.split('@')[0];
+  // --- 1. LÓGICA PARA RECEBER O VOTO (Via MESSAGES_UPSERT ou POLL_VOTE) ---
+  if (data.event === "messages.upsert" || data.event === "poll.vote") {
     
-    // Na enquete, o voto vem dentro de 'pollVotes'
-    const voto = voteData.pollVotes[0]?.optionName; 
+    const messageContent = data.data.message || (data.data[0]?.message);
+    const key = data.data.key || (data.data[0]?.key);
+    
+    if (!key || key.fromMe) return res.sendStatus(200);
 
-    console.log(`🗳️ Voto recebido de ${cleanNumber}: ${voto}`);
+    const cleanNumber = key.remoteJid.split('@')[0];
+    
+    // Tenta pegar o voto de duas formas diferentes (dependendo da versão da API)
+    const voto = data.data.pollVotes?.[0]?.optionName || 
+                 messageContent?.pollUpdateMessage?.vote?.optionNames?.[0] ||
+                 "";
 
-    if (cleanNumber === TELEFONE_DO_BARBEIRO) {
+    console.log(`🗳️ Tentativa de leitura de voto de ${cleanNumber}: ${voto}`);
+
+    if (cleanNumber === TELEFONE_DO_BARBEIRO && voto !== "") {
       let novoStatus = null;
       if (voto === "Sim") novoStatus = "confirmado";
       else if (voto === "Não") novoStatus = "cancelado";
@@ -52,11 +57,12 @@ app.post('/webhook-whatsapp', async (req, res) => {
               { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" } }
             );
 
-            // Confirmação final no Zap
             await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
               number: TELEFONE_DO_BARBEIRO,
-              text: `✅ Feito! Agendamento de ${agendamentos[0].cliente_nome} marcado como ${novoStatus.toUpperCase()}.`
+              text: `✅ Agendamento de ${agendamentos[0].cliente_nome} foi ${novoStatus.toUpperCase()}!`
             }, { headers: { "apikey": API_KEY } });
+            
+            console.log(`✅ Sucesso! Banco atualizado para ${novoStatus}`);
           }
         } catch (e) {
           console.error(`❌ Erro no Supabase:`, e.message);
@@ -66,26 +72,23 @@ app.post('/webhook-whatsapp', async (req, res) => {
     return res.sendStatus(200);
   }
 
-  // --- 2. LÓGICA DE AVISO AO BARBEIRO (Cria a Enquete quando houver INSERT no banco) ---
+  // --- 2. LÓGICA DE AVISO (CRIA A ENQUETE) ---
   if (data.table === "appointments" && data.type === "INSERT") {
     const novo = data.record;
-    
     const pergunta = `✂️ *NOVO AGENDAMENTO*\n\n` +
                      `👤 Cliente: ${novo.cliente_nome}\n` +
-                     `⏰ Horário: ${novo.horario}\n` +
-                     `💇‍♂️ Serviço: ${novo.servico}\n\n` +
+                     `⏰ Horário: ${novo.horario}\n\n` +
                      `Deseja aceitar?`;
     
     try {
-      // Usando o endpoint de Poll (Enquete)
       await axios.post(`${EVO_URL}/message/sendPoll/${INSTANCE_NAME}`, {
         number: TELEFONE_DO_BARBEIRO,
         name: pergunta,
         options: ["Sim", "Não"],
-        selectableOptionsCount: 1 // Só pode escolher uma opção
+        selectableOptionsCount: 1
       }, { headers: { "apikey": API_KEY } });
       
-      console.log("🚀 Enquete de confirmação enviada.");
+      console.log("🚀 Enquete enviada com sucesso.");
     } catch (e) {
       console.error("❌ Erro ao enviar enquete:", e.response?.data || e.message);
     }
@@ -94,7 +97,5 @@ app.post('/webhook-whatsapp', async (req, res) => {
   res.status(200).send('OK');
 });
 
-app.get('/', (req, res) => res.json({ status: 'online', mode: 'poll' }));
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Ouvinte (Modo Enquete) na porta ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Ouvinte rodando na porta ${PORT}`));
