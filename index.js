@@ -12,7 +12,7 @@ const API_KEY = "D34185BFF8C0-4FBE-BC0E-CCD640245900";
 const SUPABASE_URL = "https://bmkeegwjvtfwiobcptqq.supabase.co/rest/v1";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJta2VlZ3dqdnRmd2lvYmNwdHFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2MDAwMTcsImV4cCI6MjA5MzE3NjAxN30.8oIqYcQ8252nndgyZZIRjxeKKk-P8TR2L91fr-q0-LE";
 
-// SEU NÚMERO (Como aparece nos logs)
+// SEU NÚMERO (Para onde o bot envia os avisos)
 const TELEFONE_DO_BARBEIRO = "555199875692";
 
 app.post('/webhook-whatsapp', async (req, res) => {
@@ -20,90 +20,80 @@ app.post('/webhook-whatsapp', async (req, res) => {
   
   console.log('📨 Webhook recebido:', JSON.stringify(data, null, 2));
 
-  // --- 1. LÓGICA PARA CAPTURAR O CLIQUE NA ENQUETE ---
-  // Verifica se é um evento de voto ou uma mensagem comum (upsert)
-  if (data.event === "poll.vote" || data.event === "messages.upsert") {
-    
+  // --- 1. LÓGICA DE RESPOSTA (Ouvindo o SIM ou NÃO) ---
+  if (data.event === "messages.upsert") {
+    const messageData = data.data.message || (data.data[0]?.message);
     const key = data.data.key || (data.data[0]?.key);
+    
     if (!key || key.fromMe) return res.sendStatus(200);
 
     const cleanNumber = key.remoteJid.split('@')[0];
+    const textReceived = (messageData?.conversation || messageData?.extendedTextMessage?.text || "").trim().toUpperCase();
 
-    // Tenta extrair o texto do voto de várias formas possíveis na Evolution API
-    const voto = data.data.pollVotes?.[0]?.optionName || 
-                 data.data.message?.pollUpdateMessage?.vote?.optionNames?.[0] ||
-                 data.data[0]?.message?.pollUpdateMessage?.vote?.optionNames?.[0] || 
-                 "";
+    console.log(`📱 Resposta de ${cleanNumber}: ${textReceived}`);
 
-    console.log(`🗳️ Voto detectado de ${cleanNumber}: "${voto}"`);
-
-    if (cleanNumber === TELEFONE_DO_BARBEIRO && voto !== "") {
+    if (cleanNumber === TELEFONE_DO_BARBEIRO) {
       let novoStatus = null;
-      if (voto === "Sim") novoStatus = "confirmado";
-      if (voto === "Não") novoStatus = "cancelado";
+      if (textReceived === "SIM") novoStatus = "confirmado";
+      else if (textReceived === "NÃO" || textReceived === "NAO") novoStatus = "cancelado";
 
       if (novoStatus) {
         try {
-          // Busca o último pendente
-          const queryUrl = `${SUPABASE_URL}/appointments?status=eq.pendente&order=created_at.desc&limit=1`;
-          const getResponse = await axios.get(queryUrl, {
+          // Busca o agendamento pendente mais recente
+          const resSupabase = await axios.get(`${SUPABASE_URL}/appointments?status=eq.pendente&order=created_at.desc&limit=1`, {
             headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` }
           });
-          
-          if (getResponse.data.length > 0) {
-            const agendamento = getResponse.data[0];
+
+          if (resSupabase.data.length > 0) {
+            const agendamentoId = resSupabase.data[0].id;
             
-            // Atualiza o banco
-            await axios.patch(`${SUPABASE_URL}/appointments?id=eq.${agendamento.id}`, 
+            // Atualiza no Supabase
+            await axios.patch(`${SUPABASE_URL}/appointments?id=eq.${agendamentoId}`, 
               { status: novoStatus },
               { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" } }
             );
 
-            // Avisa no Zap que deu certo
+            // Confirmação para o barbeiro
             await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
               number: TELEFONE_DO_BARBEIRO,
-              text: `✅ Agendamento de *${agendamento.cliente_nome}* foi ${novoStatus.toUpperCase()}!`
+              text: `✅ O agendamento de *${resSupabase.data[0].cliente_nome}* foi ${novoStatus.toUpperCase()} no sistema.`
             }, { headers: { "apikey": API_KEY } });
-            
-            console.log(`✅ Sucesso: ${agendamento.id} movido para ${novoStatus}`);
           }
         } catch (e) {
-          console.error("❌ Erro ao processar voto:", e.message);
+          console.error("Erro ao atualizar banco:", e.message);
         }
       }
     }
     return res.sendStatus(200);
   }
 
-  // --- 2. LÓGICA DE ENVIO DA ENQUETE (Quando entra novo agendamento) ---
+  // --- 2. LÓGICA DE ENVIO (Formato que você pediu) ---
   if (data.table === "appointments" && data.type === "INSERT") {
-    const novo = data.record;
+    const n = data.record;
     
-    const pergunta = `✂️ *NOVO AGENDAMENTO*\n\n` +
-                     `👤 Cliente: ${novo.cliente_nome}\n` +
-                     `⏰ Horário: ${novo.horario}\n` +
-                     `💇‍♂️ Serviço: ${novo.servico}\n\n` +
-                     `Deseja aceitar?`;
-    
+    const textoMensagem = `🔔 *NOVO PEDIDO!*\n\n` +
+                          `Cliente: ${n.cliente_nome}\n` +
+                          `numero: ${n.cliente_contato || 'Não informado'}\n` +
+                          `Serviço: ${n.servico}\n` +
+                          `Data: *${n.data || 'Não informada'}*\n` +
+                          `Hora: ${n.horario}\n\n` +
+                          `Deseja aceitar?\n` +
+                          `Responda *SIM* ou *NÃO*`;
+
     try {
-      // Envia como Enquete (Poll)
-      await axios.post(`${EVO_URL}/message/sendPoll/${INSTANCE_NAME}`, {
+      await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
         number: TELEFONE_DO_BARBEIRO,
-        name: pergunta,
-        options: ["Sim", "Não"],
-        selectableOptionsCount: 1
+        text: textoMensagem
       }, { headers: { "apikey": API_KEY } });
       
-      console.log("🚀 Enquete enviada para o barbeiro.");
+      console.log("🚀 Notificação enviada ao barbeiro.");
     } catch (e) {
-      console.error("❌ Erro ao enviar enquete:", e.response?.data || e.message);
+      console.error("Erro ao enviar mensagem:", e.message);
     }
   }
   
   res.sendStatus(200);
 });
 
-app.get('/', (req, res) => res.json({ status: 'online', type: 'poll-collector' }));
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Servidor de Enquetes na porta ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Ouvinte ativo na porta ${PORT}`));
