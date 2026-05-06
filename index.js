@@ -12,42 +12,30 @@ const API_KEY = "D34185BFF8C0-4FBE-BC0E-CCD640245900";
 const SUPABASE_URL = "https://bmkeegwjvtfwiobcptqq.supabase.co/rest/v1";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJta2VlZ3dqdnRmd2lvYmNwdHFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2MDAwMTcsImV4cCI6MjA5MzE3NjAxN30.8oIqYcQ8252nndgyZZIRjxeKKk-P8TR2L91fr-q0-LE";
 
-// SEU NÚMERO (Deve ser o mesmo que aparece nos logs: 555199875692)
 const TELEFONE_DO_BARBEIRO = "555199875692";
 
 app.post('/webhook-whatsapp', async (req, res) => {
   const data = req.body;
   
   console.log('📨 Webhook recebido:', JSON.stringify(data, null, 2));
-  
-  // --- 1. LÓGICA DE RESPOSTA DO BARBEIRO (Trata o clique no botão ou texto) ---
-  if (data.event === "messages.upsert") {
-    const messageData = data.data.message || (data.data[0]?.message);
-    const key = data.data.key || (data.data[0]?.key);
-    
-    if (!key || key.fromMe) return res.sendStatus(200);
-    
-    const remoteJid = key.remoteJid;
-    const cleanNumber = remoteJid.split('@')[0];
 
-    // Captura o ID do botão clicado OU o texto digitado
-    const textReceived = (
-      messageData?.buttonsResponseMessage?.selectedButtonId || 
-      messageData?.conversation || 
-      messageData?.extendedTextMessage?.text || 
-      ""
-    ).trim();
+  // --- 1. LÓGICA PARA RECEBER O VOTO DA ENQUETE ---
+  if (data.event === "poll.vote") {
+    const voteData = data.data;
+    const cleanNumber = voteData.key.remoteJid.split('@')[0];
     
-    console.log(`📱 Mensagem de ${cleanNumber}: ${textReceived}`);
-    
+    // Na enquete, o voto vem dentro de 'pollVotes'
+    const voto = voteData.pollVotes[0]?.optionName; 
+
+    console.log(`🗳️ Voto recebido de ${cleanNumber}: ${voto}`);
+
     if (cleanNumber === TELEFONE_DO_BARBEIRO) {
       let novoStatus = null;
-      if (textReceived === "1") novoStatus = "confirmado";
-      else if (textReceived === "0") novoStatus = "cancelado";
+      if (voto === "Sim") novoStatus = "confirmado";
+      else if (voto === "Não") novoStatus = "cancelado";
 
       if (novoStatus) {
         try {
-          // Busca o agendamento pendente mais recente
           const queryUrl = `${SUPABASE_URL}/appointments?status=eq.pendente&order=created_at.desc&limit=1`;
           const getResponse = await axios.get(queryUrl, {
             headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` }
@@ -58,66 +46,55 @@ app.post('/webhook-whatsapp', async (req, res) => {
           if (agendamentos && agendamentos.length > 0) {
             const agendamentoId = agendamentos[0].id;
             
-            // Atualiza no Supabase
             await axios.patch(
               `${SUPABASE_URL}/appointments?id=eq.${agendamentoId}`,
               { status: novoStatus },
-              {
-                headers: {
-                  "apikey": SUPABASE_KEY,
-                  "Authorization": `Bearer ${SUPABASE_KEY}`,
-                  "Content-Type": "application/json"
-                }
-              }
+              { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" } }
             );
 
-            // Confirmação para você no WhatsApp
+            // Confirmação final no Zap
             await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
               number: TELEFONE_DO_BARBEIRO,
-              text: `✅ Agendamento de ${agendamentos[0].cliente_nome} foi ${novoStatus.toUpperCase()}.`
+              text: `✅ Feito! Agendamento de ${agendamentos[0].cliente_nome} marcado como ${novoStatus.toUpperCase()}.`
             }, { headers: { "apikey": API_KEY } });
-
-            console.log(`✅ Sucesso: Agendamento ${agendamentoId} ${novoStatus}`);
           }
         } catch (e) {
-          console.error(`❌ Erro ao atualizar banco:`, e.message);
+          console.error(`❌ Erro no Supabase:`, e.message);
         }
       }
     }
     return res.sendStatus(200);
   }
-  
-  // --- 2. LÓGICA DE AVISO AO BARBEIRO (Novo agendamento com BOTÕES) ---
+
+  // --- 2. LÓGICA DE AVISO AO BARBEIRO (Cria a Enquete quando houver INSERT no banco) ---
   if (data.table === "appointments" && data.type === "INSERT") {
     const novo = data.record;
     
-    const msgCorpo = `✂️ *NOVO CLIENTE!*\n\n` +
-                     `👤 Nome: ${novo.cliente_nome}\n` +
+    const pergunta = `✂️ *NOVO AGENDAMENTO*\n\n` +
+                     `👤 Cliente: ${novo.cliente_nome}\n` +
                      `⏰ Horário: ${novo.horario}\n` +
-                     `💇‍♂️ Serviço: ${novo.servico}`;
+                     `💇‍♂️ Serviço: ${novo.servico}\n\n` +
+                     `Deseja aceitar?`;
     
     try {
-      await axios.post(`${EVO_URL}/message/sendButtons/${INSTANCE_NAME}`, {
+      // Usando o endpoint de Poll (Enquete)
+      await axios.post(`${EVO_URL}/message/sendPoll/${INSTANCE_NAME}`, {
         number: TELEFONE_DO_BARBEIRO,
-        title: "Novo Agendamento",
-        description: msgCorpo,
-        footer: "Selecione uma opção:",
-        buttons: [
-          { buttonId: "1", buttonText: { displayText: "✅ Confirmar" }, type: 1 },
-          { buttonId: "0", buttonText: { displayText: "❌ Cancelar" }, type: 1 }
-        ]
+        name: pergunta,
+        options: ["Sim", "Não"],
+        selectableOptionsCount: 1 // Só pode escolher uma opção
       }, { headers: { "apikey": API_KEY } });
       
-      console.log("🚀 Botões de confirmação enviados.");
+      console.log("🚀 Enquete de confirmação enviada.");
     } catch (e) {
-      console.error("❌ Erro ao enviar botões:", e.response?.data || e.message);
+      console.error("❌ Erro ao enviar enquete:", e.response?.data || e.message);
     }
   }
   
   res.status(200).send('OK');
 });
 
-app.get('/', (req, res) => res.json({ status: 'online' }));
+app.get('/', (req, res) => res.json({ status: 'online', mode: 'poll' }));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Ouvinte rodando na porta ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Ouvinte (Modo Enquete) na porta ${PORT}`));
