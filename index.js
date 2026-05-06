@@ -12,63 +12,54 @@ const API_KEY = "D34185BFF8C0-4FBE-BC0E-CCD640245900";
 const SUPABASE_URL = "https://bmkeegwjvtfwiobcptqq.supabase.co/rest/v1";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJta2VlZ3dqdnRmd2lvYmNwdHFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2MDAwMTcsImV4cCI6MjA5MzE3NjAxN30.8oIqYcQ8252nndgyZZIRjxeKKk-P8TR2L91fr-q0-LE";
 
-// ATENÇÃO: COLOQUE O SEU NÚMERO DE WHATSAPP AQUI (FORMATO: 55519... OU 5548...)
+// SEU NÚMERO (Deve ser o mesmo que aparece nos logs: 555199875692)
 const TELEFONE_DO_BARBEIRO = "555199875692";
-
-// URL DO WEBHOOK
-const WEBHOOK_URL = "https://ouvinte-production.up.railway.app/webhook-whatsapp";
 
 app.post('/webhook-whatsapp', async (req, res) => {
   const data = req.body;
   
   console.log('📨 Webhook recebido:', JSON.stringify(data, null, 2));
   
-  // --- 1. LÓGICA DE RESPOSTA DO BARBEIRO ---
+  // --- 1. LÓGICA DE RESPOSTA DO BARBEIRO (Trata o clique no botão ou texto) ---
   if (data.event === "messages.upsert") {
+    const messageData = data.data.message || (data.data[0]?.message);
     const key = data.data.key || (data.data[0]?.key);
-    const msg = data.data.message || (data.data[0]?.message);
     
     if (!key || key.fromMe) return res.sendStatus(200);
     
     const remoteJid = key.remoteJid;
     const cleanNumber = remoteJid.split('@')[0];
-    const textReceived = (msg?.conversation || msg?.extendedTextMessage?.text || "").trim();
-    
-    console.log(`📱 Mensagem recebida de ${cleanNumber}: ${textReceived}`);
-    
-    // Verifica se quem respondeu foi o Barbeiro
-    if (cleanNumber === TELEFONE_DO_BARBEIRO) {
-      console.log(`🔑 [BARBEIRO] Mensagem do barbeiro detectada. Texto recebido: "${textReceived}"`);
 
+    // Captura o ID do botão clicado OU o texto digitado
+    const textReceived = (
+      messageData?.buttonsResponseMessage?.selectedButtonId || 
+      messageData?.conversation || 
+      messageData?.extendedTextMessage?.text || 
+      ""
+    ).trim();
+    
+    console.log(`📱 Mensagem de ${cleanNumber}: ${textReceived}`);
+    
+    if (cleanNumber === TELEFONE_DO_BARBEIRO) {
       let novoStatus = null;
       if (textReceived === "1") novoStatus = "confirmado";
       else if (textReceived === "0") novoStatus = "cancelado";
 
-      console.log(`🔑 [BARBEIRO] novoStatus resolvido para: ${novoStatus}`);
-
       if (novoStatus) {
         try {
+          // Busca o agendamento pendente mais recente
           const queryUrl = `${SUPABASE_URL}/appointments?status=eq.pendente&order=created_at.desc&limit=1`;
-          console.log(`🔍 [SUPABASE] Iniciando busca de agendamento pendente. URL: ${queryUrl}`);
-
-          // Busca o agendamento mais recente que ainda está 'pendente'
-          const getResponse = await axios.get(
-            queryUrl,
-            { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` } }
-          );
+          const getResponse = await axios.get(queryUrl, {
+            headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` }
+          });
+          
           const agendamentos = getResponse.data;
 
-          console.log(`🔍 [SUPABASE] Resposta recebida. HTTP ${getResponse.status}. Agendamentos encontrados: ${agendamentos ? agendamentos.length : 0}`);
-          console.log(`🔍 [SUPABASE] Dados retornados:`, JSON.stringify(agendamentos, null, 2));
-
-          if (!agendamentos || agendamentos.length === 0) {
-            console.log(`⚠️ [SUPABASE] Nenhum agendamento com status 'pendente' encontrado. Nada a atualizar.`);
-          } else {
+          if (agendamentos && agendamentos.length > 0) {
             const agendamentoId = agendamentos[0].id;
-            console.log(`✏️ [SUPABASE] Agendamento encontrado. ID: ${agendamentoId}. Iniciando PATCH para status="${novoStatus}"...`);
-
-            // Atualiza o status no Supabase
-            const patchResponse = await axios.patch(
+            
+            // Atualiza no Supabase
+            await axios.patch(
               `${SUPABASE_URL}/appointments?id=eq.${agendamentoId}`,
               { status: novoStatus },
               {
@@ -80,68 +71,53 @@ app.post('/webhook-whatsapp', async (req, res) => {
               }
             );
 
-            console.log(`✏️ [SUPABASE] PATCH concluído. HTTP ${patchResponse.status}. Resposta:`, JSON.stringify(patchResponse.data, null, 2));
-
-            // Confirmação para o Barbeiro
-            console.log(`📤 [WHATSAPP] Enviando confirmação ao barbeiro...`);
+            // Confirmação para você no WhatsApp
             await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
               number: TELEFONE_DO_BARBEIRO,
-              text: `✅ O agendamento de ${agendamentos[0].cliente_nome} foi ${novoStatus.toUpperCase()} no sistema.`
+              text: `✅ Agendamento de ${agendamentos[0].cliente_nome} foi ${novoStatus.toUpperCase()}.`
             }, { headers: { "apikey": API_KEY } });
 
-            console.log(`✅ [CONCLUÍDO] Agendamento ${agendamentoId} atualizado para: ${novoStatus}`);
+            console.log(`✅ Sucesso: Agendamento ${agendamentoId} ${novoStatus}`);
           }
         } catch (e) {
-          console.error(`❌ [ERRO] Falha ao processar resposta do barbeiro.`);
-          console.error(`❌ [ERRO] Mensagem:`, e.message);
-          console.error(`❌ [ERRO] HTTP Status:`, e.response?.status);
-          console.error(`❌ [ERRO] Resposta do servidor:`, JSON.stringify(e.response?.data, null, 2));
-          console.error(`❌ [ERRO] Stack:`, e.stack);
+          console.error(`❌ Erro ao atualizar banco:`, e.message);
         }
-      } else {
-        console.log(`⚠️ [BARBEIRO] Texto "${textReceived}" não é "1" nem "0". Nenhuma ação tomada.`);
       }
     }
-    
     return res.sendStatus(200);
   }
   
-  // --- 2. LÓGICA DE AVISO AO BARBEIRO (Webhook do Supabase) ---
+  // --- 2. LÓGICA DE AVISO AO BARBEIRO (Novo agendamento com BOTÕES) ---
   if (data.table === "appointments" && data.type === "INSERT") {
-    const novoAgendamento = data.record;
+    const novo = data.record;
     
-    const msgBarbeiro = `✂️ *NOVO AGENDAMENTO!*\n\n` +
-      `👤 Cliente: ${novoAgendamento.cliente_nome}\n` +
-      `⏰ Horário: ${novoAgendamento.horario}\n` +
-      `💇‍♂️ Serviço: ${novoAgendamento.servico}\n\n` +
-      `*Responda:*\n*1* para Confirmar\n*0* para Cancelar`;
+    const msgCorpo = `✂️ *NOVO CLIENTE!*\n\n` +
+                     `👤 Nome: ${novo.cliente_nome}\n` +
+                     `⏰ Horário: ${novo.horario}\n` +
+                     `💇‍♂️ Serviço: ${novo.servico}`;
     
     try {
-      await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
+      await axios.post(`${EVO_URL}/message/sendButtons/${INSTANCE_NAME}`, {
         number: TELEFONE_DO_BARBEIRO,
-        text: msgBarbeiro
+        title: "Novo Agendamento",
+        description: msgCorpo,
+        footer: "Selecione uma opção:",
+        buttons: [
+          { buttonId: "1", buttonText: { displayText: "✅ Confirmar" }, type: 1 },
+          { buttonId: "0", buttonText: { displayText: "❌ Cancelar" }, type: 1 }
+        ]
       }, { headers: { "apikey": API_KEY } });
       
-      console.log("🚀 Notificação enviada ao barbeiro.");
+      console.log("🚀 Botões de confirmação enviados.");
     } catch (e) {
-      console.error("❌ Erro ao notificar barbeiro:", e.response?.data || e.message);
+      console.error("❌ Erro ao enviar botões:", e.response?.data || e.message);
     }
   }
   
   res.status(200).send('OK');
 });
 
-// Rota de teste
-app.get('/', (req, res) => {
-  res.json({ 
-    status: 'online',
-    webhook_url: WEBHOOK_URL,
-    message: 'Ouvinte WhatsApp ativo'
-  });
-});
+app.get('/', (req, res) => res.json({ status: 'online' }));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Serviço ativo na porta ${PORT}`);
-  console.log(`📍 Webhook URL: ${WEBHOOK_URL}`);
-});
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Ouvinte rodando na porta ${PORT}`));
