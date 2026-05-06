@@ -13,7 +13,7 @@ const SUPABASE_URL = "https://bmkeegwjvtfwiobcptqq.supabase.co/rest/v1";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJta2VlZ3dqdnRmd2lvYmNwdHFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2MDAwMTcsImV4cCI6MjA5MzE3NjAxN30.8oIqYcQ8252nndgyZZIRjxeKKk-P8TR2L91fr-q0-LE";
 
 // ATENÇÃO: COLOQUE O SEU NÚMERO DE WHATSAPP AQUI (FORMATO: 55519... OU 5548...)
-const TELEFONE_DO_BARBEIRO = "554896156188";
+const TELEFONE_DO_BARBEIRO = "555199875692";
 
 // URL DO WEBHOOK
 const WEBHOOK_URL = "https://ouvinte-production.up.railway.app/webhook-whatsapp";
