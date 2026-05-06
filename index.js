@@ -71,14 +71,22 @@ app.post('/webhook-whatsapp', async (req, res) => {
   if (data.table === "appointments" && data.type === "INSERT") {
     const n = data.record;
     
-    const textoMensagem = `🔔 *NOVO PEDIDO!*\n\n` +
-                          `Cliente: ${n.cliente_nome}\n` +
-                          `numero: ${n.cliente_contato || 'Não informado'}\n` +
-                          `Serviço: ${n.servico}\n` +
-                          `Data: *${n.data || 'Não informada'}*\n` +
-                          `Hora: ${n.horario}\n\n` +
-                          `Deseja aceitar?\n` +
-                          `Responda *SIM* ou *NÃO*`;
+  const textoMensagem = 
+            `🔔 NOVO PEDIDO!
+            
+            Cliente: ${n.cliente_nome}
+            
+            numero: ${n.cliente_contato || 'Não informado'}
+            
+            Serviço: ${n.servico}
+            
+            Data: *${n.data || 'Não informada'}*
+            
+            Hora: ${n.horario}
+            
+            Deseja aceitar?
+            
+            Responda SIM ou NÃO`;
 
     try {
       await axios.post(`${EVO_URL}/message/sendText/${INSTANCE_NAME}`, {
